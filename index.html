@@ -23,7 +23,7 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
-    // Lucide Reactアイコンの代替（SVGで直接実装）
+    // アイコン
     const Plus = ({ className }) => (
       <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -60,37 +60,40 @@
       </svg>
     );
 
-    // Storage APIのフォールバック（ローカル環境用）
+    const Edit = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+      </svg>
+    );
+
+    const Settings = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    );
+
     const storage = window.storage || {
       get: async (key) => {
         const data = localStorage.getItem(key);
         return data ? { key, value: data, shared: false } : null;
       },
-      set: async (key, value, shared = false) => {
+      set: async (key, value) => {
         localStorage.setItem(key, value);
-        return { key, value, shared };
-      },
-      delete: async (key) => {
-        localStorage.removeItem(key);
-        return { key, deleted: true, shared: false };
-      },
-      list: async (prefix = '', shared = false) => {
-        const keys = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key.startsWith(prefix)) {
-            keys.push(key);
-          }
-        }
-        return { keys, prefix, shared };
+        return { key, value, shared: false };
       }
     };
 
     const AssetPortfolioTracker = () => {
       const [assets, setAssets] = useState([]);
       const [showAddForm, setShowAddForm] = useState(false);
+      const [showSettings, setShowSettings] = useState(false);
+      const [editingId, setEditingId] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [updating, setUpdating] = useState({});
       const [usdJpyRate, setUsdJpyRate] = useState(150);
+      const [apiKey, setApiKey] = useState('');
+      const [tempApiKey, setTempApiKey] = useState('');
 
       const assetTypes = [
         'FX(ドル円)',
@@ -102,10 +105,13 @@
         '日本ETF',
         '金',
         '銀',
-        'プラチナ'
+        'プラチナ',
+        'Bitcoin',
+        'Ethereum',
+        'XRP'
       ];
 
-      const [newAsset, setNewAsset] = useState({
+      const [formData, setFormData] = useState({
         type: '日本株',
         ticker: '',
         name: '',
@@ -123,7 +129,32 @@
 
       useEffect(() => {
         loadAssets();
+        loadApiKey();
+        fetchUsdJpyRate();
       }, []);
+
+      const loadApiKey = async () => {
+        try {
+          const result = await storage.get('alpha-vantage-api-key');
+          if (result && result.value) {
+            setApiKey(result.value);
+            setTempApiKey(result.value);
+          }
+        } catch (error) {
+          console.log('APIキー未設定');
+        }
+      };
+
+      const saveApiKey = async () => {
+        try {
+          await storage.set('alpha-vantage-api-key', tempApiKey);
+          setApiKey(tempApiKey);
+          setShowSettings(false);
+          alert('APIキーを保存しました');
+        } catch (error) {
+          alert('APIキーの保存に失敗しました');
+        }
+      };
 
       const loadAssets = async () => {
         try {
@@ -132,9 +163,207 @@
             setAssets(JSON.parse(result.value));
           }
         } catch (error) {
-          console.log('初回起動またはデータなし');
+          console.log('初回起動');
         } finally {
           setLoading(false);
+        }
+      };
+
+      const fetchUsdJpyRate = async () => {
+        try {
+          const response = await fetch('https://api.frankfurter.app/latest?from=USD&to=JPY');
+          const data = await response.json();
+          if (data.rates && data.rates.JPY) {
+            setUsdJpyRate(data.rates.JPY);
+          }
+        } catch (error) {
+          console.log('為替レート取得失敗');
+        }
+      };
+
+      const generateKabutanUrl = (ticker, type) => {
+        if (type === '日本株' || type === '日本ETF' || type === '日本投資信託') {
+          return `https://kabutan.jp/stock/?code=${ticker}`;
+        } else if (type === '米国株' || type === '米国ETF') {
+          return `https://kabutan.jp/stock/chart?code=${ticker}.us`;
+        } else if (type === 'FX(ドル円)') {
+          return 'https://kabutan.jp/stock/chart?code=998407';
+        } else if (type === 'FX(ユーロ円)') {
+          return 'https://kabutan.jp/stock/chart?code=998405';
+        } else if (type === '金') {
+          return 'https://kabutan.jp/stock/chart?code=1540';
+        } else if (type === '銀') {
+          return 'https://kabutan.jp/stock/chart?code=1542';
+        } else if (type === 'プラチナ') {
+          return 'https://kabutan.jp/stock/chart?code=1541';
+        } else if (type === 'Bitcoin') {
+          return 'https://finance.yahoo.com/quote/BTC-USD';
+        } else if (type === 'Ethereum') {
+          return 'https://finance.yahoo.com/quote/ETH-USD';
+        } else if (type === 'XRP') {
+          return 'https://finance.yahoo.com/quote/XRP-USD';
+        }
+        return '';
+      };
+
+      const getYahooSymbol = (asset) => {
+        if (asset.type === '日本株' || asset.type === '日本ETF') {
+          return `${asset.ticker}.T`;
+        } else if (asset.type === 'FX(ドル円)') {
+          return 'USDJPY=X';
+        } else if (asset.type === 'FX(ユーロ円)') {
+          return 'EURJPY=X';
+        } else if (asset.type === '金') {
+          return 'GC=F';
+        } else if (asset.type === '銀') {
+          return 'SI=F';
+        } else if (asset.type === 'プラチナ') {
+          return 'PL=F';
+        } else if (asset.type === 'Bitcoin') {
+          return 'BTC-USD';
+        } else if (asset.type === 'Ethereum') {
+          return 'ETH-USD';
+        } else if (asset.type === 'XRP') {
+          return 'XRP-USD';
+        }
+        return asset.ticker;
+      };
+
+      const fetchYahooFinance = async (symbol) => {
+        try {
+          const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?range=1mo&interval=1d`;
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          if (data.chart && data.chart.result && data.chart.result[0]) {
+            const result = data.chart.result[0];
+            const quotes = result.indicators.quote[0];
+            const timestamps = result.timestamp;
+            
+            if (quotes.close && quotes.close.length > 0) {
+              const closes = quotes.close.filter(p => p !== null);
+              const currentPrice = closes[closes.length - 1];
+              const previousDayPrice = closes.length > 1 ? closes[closes.length - 2] : currentPrice;
+              const previousMonthPrice = closes.length > 20 ? closes[closes.length - 21] : closes[0];
+              
+              return {
+                currentPrice,
+                previousDayPrice,
+                previousMonthPrice
+              };
+            }
+          }
+          return null;
+        } catch (error) {
+          console.error('Yahoo Finance取得エラー:', error);
+          return null;
+        }
+      };
+
+      const updatePriceWithYahoo = async (asset) => {
+        setUpdating(prev => ({ ...prev, [asset.id]: true }));
+        
+        try {
+          const symbol = getYahooSymbol(asset);
+          const priceData = await fetchYahooFinance(symbol);
+          
+          if (!priceData) {
+            alert('価格の取得に失敗しました');
+            return;
+          }
+
+          let currentPrice = priceData.currentPrice;
+          let currentPriceUsd = 0;
+
+          // 金銀プラチナはトロイオンスからグラムあたり円に変換
+          if (asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ') {
+            const troyOunceToGram = 31.1035;
+            currentPrice = (priceData.currentPrice * usdJpyRate) / troyOunceToGram;
+          }
+          // 暗号通貨は円換算
+          else if (asset.type === 'Bitcoin' || asset.type === 'Ethereum' || asset.type === 'XRP') {
+            currentPriceUsd = priceData.currentPrice;
+            currentPrice = priceData.currentPrice * usdJpyRate;
+          }
+
+          const updatedAsset = {
+            ...asset,
+            currentPrice: currentPrice,
+            currentPriceUsd: currentPriceUsd,
+            previousDayPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ' 
+              ? (priceData.previousDayPrice * usdJpyRate) / 31.1035
+              : priceData.previousDayPrice,
+            previousMonthPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ'
+              ? (priceData.previousMonthPrice * usdJpyRate) / 31.1035
+              : priceData.previousMonthPrice
+          };
+
+          const updatedAssets = assets.map(a => a.id === asset.id ? updatedAsset : a);
+          await saveAssets(updatedAssets);
+          
+          alert('価格を更新しました');
+        } catch (error) {
+          console.error('価格更新エラー:', error);
+          alert('価格の更新に失敗しました');
+        } finally {
+          setUpdating(prev => ({ ...prev, [asset.id]: false }));
+        }
+      };
+
+      const updatePriceWithAlphaVantage = async (asset) => {
+        if (!apiKey) {
+          alert('APIキーが設定されていません');
+          return;
+        }
+
+        setUpdating(prev => ({ ...prev, [asset.id]: true }));
+
+        try {
+          const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${asset.ticker}&apikey=${apiKey}`;
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          if (data['Global Quote'] && data['Global Quote']['05. price']) {
+            const currentPriceUsd = parseFloat(data['Global Quote']['05. price']);
+            const currentPrice = currentPriceUsd * usdJpyRate;
+
+            const updatedAsset = {
+              ...asset,
+              previousDayPrice: asset.currentPrice,
+              currentPrice: currentPrice,
+              currentPriceUsd: currentPriceUsd
+            };
+
+            const updatedAssets = assets.map(a => a.id === asset.id ? updatedAsset : a);
+            await saveAssets(updatedAssets);
+            
+            alert('価格を更新しました');
+          } else if (data['Note']) {
+            alert('API制限に達しました。1分待ってから再試行してください。');
+          }
+        } catch (error) {
+          console.error('価格更新エラー:', error);
+          alert('価格の更新に失敗しました');
+        } finally {
+          setUpdating(prev => ({ ...prev, [asset.id]: false }));
+        }
+      };
+
+      const updatePrice = async (asset) => {
+        // 米国株・ETFはAlpha Vantage
+        if (asset.type === '米国株' || asset.type === '米国ETF') {
+          await updatePriceWithAlphaVantage(asset);
+        }
+        // その他はYahoo Finance
+        else {
+          await updatePriceWithYahoo(asset);
+        }
+      };
+
+      const updateAllPrices = async () => {
+        for (const asset of assets) {
+          await updatePrice(asset);
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
       };
 
@@ -148,28 +377,60 @@
         }
       };
 
-      const addAsset = () => {
-        if (!newAsset.ticker || !newAsset.name) {
+      const handleSubmit = () => {
+        if (!formData.ticker || !formData.name) {
           alert('ティッカー/コードと銘柄名は必須です');
           return;
         }
 
+        const kabutanUrl = formData.kabutanUrl || generateKabutanUrl(formData.ticker, formData.type);
+
         const asset = {
-          ...newAsset,
-          id: Date.now(),
-          acquisitionPrice: parseFloat(newAsset.acquisitionPrice) || 0,
-          acquisitionPriceUsd: parseFloat(newAsset.acquisitionPriceUsd) || 0,
-          quantity: parseFloat(newAsset.quantity) || 0,
-          currentPrice: parseFloat(newAsset.currentPrice) || 0,
-          currentPriceUsd: parseFloat(newAsset.currentPriceUsd) || 0,
-          previousDayPrice: parseFloat(newAsset.previousDayPrice) || 0,
-          previousMonthPrice: parseFloat(newAsset.previousMonthPrice) || 0
+          ...formData,
+          id: editingId || Date.now(),
+          acquisitionPrice: parseFloat(formData.acquisitionPrice) || 0,
+          acquisitionPriceUsd: parseFloat(formData.acquisitionPriceUsd) || 0,
+          quantity: parseFloat(formData.quantity) || 0,
+          currentPrice: parseFloat(formData.currentPrice) || 0,
+          currentPriceUsd: parseFloat(formData.currentPriceUsd) || 0,
+          previousDayPrice: parseFloat(formData.previousDayPrice) || 0,
+          previousMonthPrice: parseFloat(formData.previousMonthPrice) || 0,
+          kabutanUrl
         };
 
-        const updatedAssets = [...assets, asset];
+        let updatedAssets;
+        if (editingId) {
+          updatedAssets = assets.map(a => a.id === editingId ? asset : a);
+        } else {
+          updatedAssets = [...assets, asset];
+        }
+        
         saveAssets(updatedAssets);
+        resetForm();
+      };
 
-        setNewAsset({
+      const startEdit = (asset) => {
+        setEditingId(asset.id);
+        setFormData({
+          type: asset.type,
+          ticker: asset.ticker,
+          name: asset.name,
+          acquisitionPrice: asset.acquisitionPrice.toString(),
+          acquisitionPriceUsd: asset.acquisitionPriceUsd.toString(),
+          quantity: asset.quantity.toString(),
+          currentPrice: asset.currentPrice.toString(),
+          currentPriceUsd: asset.currentPriceUsd.toString(),
+          previousDayPrice: asset.previousDayPrice.toString(),
+          previousMonthPrice: asset.previousMonthPrice.toString(),
+          goldenCross: asset.goldenCross,
+          kabutanUrl: asset.kabutanUrl,
+          isHolding: asset.isHolding
+        });
+        setShowAddForm(true);
+      };
+
+      const resetForm = () => {
+        setFormData({
           type: '日本株',
           ticker: '',
           name: '',
@@ -184,6 +445,7 @@
           kabutanUrl: '',
           isHolding: true
         });
+        setEditingId(null);
         setShowAddForm(false);
       };
 
@@ -205,8 +467,17 @@
         return type === '米国株' || type === '米国ETF';
       };
 
+      const isCryptoAsset = (type) => {
+        return type === 'Bitcoin' || type === 'Ethereum' || type === 'XRP';
+      };
+
+      const isPreciousMetal = (type) => {
+        return type === '金' || type === '銀' || type === 'プラチナ';
+      };
+
       const calculateMetrics = (asset) => {
         const isUs = isUsAsset(asset.type);
+        const isCrypto = isCryptoAsset(asset.type);
         
         const dayDiff = asset.currentPrice - asset.previousDayPrice;
         const dayDiffRate = asset.previousDayPrice ? (dayDiff / asset.previousDayPrice * 100) : 0;
@@ -214,34 +485,23 @@
         const monthDiff = asset.currentPrice - asset.previousMonthPrice;
         const monthDiffRate = asset.previousMonthPrice ? (monthDiff / asset.previousMonthPrice * 100) : 0;
         
-        const marketValueUsd = isUs ? asset.currentPriceUsd * asset.quantity : 0;
-        const marketValueJpy = isUs ? marketValueUsd * usdJpyRate : asset.currentPrice * asset.quantity;
+        const marketValueUsd = (isUs || isCrypto) ? asset.currentPriceUsd * asset.quantity : 0;
+        const marketValueJpy = (isUs || isCrypto) ? marketValueUsd * usdJpyRate : asset.currentPrice * asset.quantity;
         
-        const acquisitionValueUsd = isUs ? asset.acquisitionPriceUsd * asset.quantity : 0;
-        const acquisitionValueJpy = isUs ? acquisitionValueUsd * usdJpyRate : asset.acquisitionPrice * asset.quantity;
+        const acquisitionValueUsd = (isUs || isCrypto) ? asset.acquisitionPriceUsd * asset.quantity : 0;
+        const acquisitionValueJpy = (isUs || isCrypto) ? acquisitionValueUsd * usdJpyRate : asset.acquisitionPrice * asset.quantity;
         
         const gainLossUsd = marketValueUsd - acquisitionValueUsd;
         const gainLossJpy = marketValueJpy - acquisitionValueJpy;
         const gainLossRate = acquisitionValueJpy ? (gainLossJpy / acquisitionValueJpy * 100) : 0;
         
-        let trend = null;
-        if (dayDiff > 0) trend = 'up';
-        else if (dayDiff < 0) trend = 'down';
-        else trend = 'neutral';
+        let trend = dayDiff > 0 ? 'up' : dayDiff < 0 ? 'down' : 'neutral';
         
         return {
-          dayDiff,
-          dayDiffRate,
-          monthDiff,
-          monthDiffRate,
-          marketValueUsd,
-          marketValueJpy,
-          acquisitionValueUsd,
-          acquisitionValueJpy,
-          gainLossUsd,
-          gainLossJpy,
-          gainLossRate,
-          trend
+          dayDiff, dayDiffRate, monthDiff, monthDiffRate,
+          marketValueUsd, marketValueJpy,
+          acquisitionValueUsd, acquisitionValueJpy,
+          gainLossUsd, gainLossJpy, gainLossRate, trend
         };
       };
 
@@ -249,9 +509,12 @@
         return num.toLocaleString('ja-JP', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
       };
 
-      const formatCurrency = (num, currency = 'JPY') => {
+      const formatCurrency = (num, currency = 'JPY', type = '') => {
         if (currency === 'USD') {
           return `$${formatNumber(num)}`;
+        }
+        if (isPreciousMetal(type)) {
+          return `¥${formatNumber(num, 0)}/g`;
         }
         return `¥${formatNumber(num, 0)}`;
       };
@@ -280,9 +543,9 @@
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">資産ポートフォリオ</h1>
-                  <p className="text-sm text-gray-500 mt-1">保有資産と監視銘柄の管理</p>
+                  <p className="text-sm text-gray-500 mt-1">株式・FX・暗号通貨・貴金属の管理</p>
                 </div>
-                <div className="flex gap-2 w-full sm:w-auto">
+                <div className="flex gap-2 w-full sm:w-auto flex-wrap">
                   <input
                     type="number"
                     value={usdJpyRate}
@@ -291,8 +554,21 @@
                     placeholder="USD/JPY"
                   />
                   <button
-                    onClick={() => setShowAddForm(!showAddForm)}
-                    className="flex-1 sm:flex-none bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                    onClick={() => setShowSettings(true)}
+                    className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={updateAllPrices}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>全更新</span>
+                  </button>
+                  <button
+                    onClick={() => { resetForm(); setShowAddForm(!showAddForm); }}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
                   >
                     <Plus className="w-4 h-4" />
                     <span>銘柄追加</span>
@@ -301,15 +577,57 @@
               </div>
             </div>
 
+            {showSettings && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
+                  <h2 className="text-xl font-bold mb-4">API設定</h2>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Alpha Vantage APIキー（米国株用）
+                    </label>
+                    <input
+                      type="text"
+                      value={tempApiKey}
+                      onChange={(e) => setTempApiKey(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="APIキーを入力"
+                    />
+                    <p className="text-xs text-gray-500 mt-2">
+                      <a href="https://www.alphavantage.co/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Alpha Vantage</a> で無料取得
+                    </p>
+                  </div>
+                  <div className="bg-blue-50 p-3 rounded-lg mb-4">
+                    <p className="text-xs text-gray-700">
+                      ℹ️ 日本株・FX・暗号通貨・貴金属はYahoo Financeから自動取得されます（APIキー不要）
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveApiKey}
+                      className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setShowSettings(false)}
+                      className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {showAddForm && (
               <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
-                <h2 className="text-lg font-semibold mb-4">新規銘柄追加</h2>
+                <h2 className="text-lg font-semibold mb-4">{editingId ? '銘柄編集' : '新規銘柄追加'}</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">資産種類</label>
                     <select
-                      value={newAsset.type}
-                      onChange={(e) => setNewAsset({ ...newAsset, type: e.target.value })}
+                      value={formData.type}
+                      onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg"
                     >
                       {assetTypes.map(type => (
@@ -319,13 +637,16 @@
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">ティッカー/コード</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {isPreciousMetal(formData.type) || isCryptoAsset(formData.type) ? 'シンボル（自動設定）' : 'ティッカー/コード'}
+                    </label>
                     <input
                       type="text"
-                      value={newAsset.ticker}
-                      onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value })}
+                      value={formData.ticker}
+                      onChange={(e) => setFormData({ ...formData, ticker: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg"
-                      placeholder="AAPL, 7203など"
+                      placeholder={isPreciousMetal(formData.type) || isCryptoAsset(formData.type) ? '自動設定' : 'AAPL, 7203など'}
+                      disabled={isPreciousMetal(formData.type) || isCryptoAsset(formData.type)}
                     />
                   </div>
                   
@@ -333,23 +654,22 @@
                     <label className="block text-sm font-medium text-gray-700 mb-1">銘柄名</label>
                     <input
                       type="text"
-                      value={newAsset.name}
-                      onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })}
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg"
-                      placeholder="Apple Inc.など"
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      取得単価{isUsAsset(newAsset.type) ? ' (USD)' : ' (円)'}
+                      取得単価{(isUsAsset(formData.type) || isCryptoAsset(formData.type)) ? ' (USD)' : isPreciousMetal(formData.type) ? ' (円/g)' : ' (円)'}
                     </label>
                     <input
                       type="number"
-                      value={isUsAsset(newAsset.type) ? newAsset.acquisitionPriceUsd : newAsset.acquisitionPrice}
-                      onChange={(e) => setNewAsset({
-                        ...newAsset,
-                        ...(isUsAsset(newAsset.type)
+                      value={(isUsAsset(formData.type) || isCryptoAsset(formData.type)) ? formData.acquisitionPriceUsd : formData.acquisitionPrice}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        ...((isUsAsset(formData.type) || isCryptoAsset(formData.type))
                           ? { acquisitionPriceUsd: e.target.value }
                           : { acquisitionPrice: e.target.value })
                       })}
@@ -359,11 +679,13 @@
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">保有数量</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      保有数量{isPreciousMetal(formData.type) ? ' (g)' : ''}
+                    </label>
                     <input
                       type="number"
-                      value={newAsset.quantity}
-                      onChange={(e) => setNewAsset({ ...newAsset, quantity: e.target.value })}
+                      value={formData.quantity}
+                      onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg"
                       step="0.01"
                     />
@@ -371,14 +693,14 @@
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      現在価格{isUsAsset(newAsset.type) ? ' (USD)' : ' (円)'}
+                      現在価格{(isUsAsset(formData.type) || isCryptoAsset(formData.type)) ? ' (USD)' : isPreciousMetal(formData.type) ? ' (円/g)' : ' (円)'}
                     </label>
                     <input
                       type="number"
-                      value={isUsAsset(newAsset.type) ? newAsset.currentPriceUsd : newAsset.currentPrice}
-                      onChange={(e) => setNewAsset({
-                        ...newAsset,
-                        ...(isUsAsset(newAsset.type)
+                      value={(isUsAsset(formData.type) || isCryptoAsset(formData.type)) ? formData.currentPriceUsd : formData.currentPrice}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        ...((isUsAsset(formData.type) || isCryptoAsset(formData.type))
                           ? { currentPriceUsd: e.target.value, currentPrice: parseFloat(e.target.value) * usdJpyRate }
                           : { currentPrice: e.target.value })
                       })}
@@ -387,45 +709,12 @@
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">前日価格</label>
-                    <input
-                      type="number"
-                      value={newAsset.previousDayPrice}
-                      onChange={(e) => setNewAsset({ ...newAsset, previousDayPrice: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg"
-                      step="0.01"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">前月価格</label>
-                    <input
-                      type="number"
-                      value={newAsset.previousMonthPrice}
-                      onChange={(e) => setNewAsset({ ...newAsset, previousMonthPrice: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg"
-                      step="0.01"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">株探URL</label>
-                    <input
-                      type="text"
-                      value={newAsset.kabutanUrl}
-                      onChange={(e) => setNewAsset({ ...newAsset, kabutanUrl: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg"
-                      placeholder="https://..."
-                    />
-                  </div>
-
                   <div className="flex items-end">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={newAsset.isHolding}
-                        onChange={(e) => setNewAsset({ ...newAsset, isHolding: e.target.checked })}
+                        checked={formData.isHolding}
+                        onChange={(e) => setFormData({ ...formData, isHolding: e.target.checked })}
                         className="w-4 h-4"
                       />
                       <span className="text-sm font-medium text-gray-700">保有中</span>
@@ -435,13 +724,13 @@
 
                 <div className="flex gap-2 mt-4">
                   <button
-                    onClick={addAsset}
+                    onClick={handleSubmit}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
                   >
-                    追加
+                    {editingId ? '更新' : '追加'}
                   </button>
                   <button
-                    onClick={() => setShowAddForm(false)}
+                    onClick={resetForm}
                     className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
                   >
                     キャンセル
@@ -456,7 +745,6 @@
                   <thead className="bg-gray-50 border-b">
                     <tr>
                       <th className="px-3 py-3 text-left font-semibold text-gray-700">種類</th>
-                      <th className="px-3 py-3 text-left font-semibold text-gray-700">ティッカー</th>
                       <th className="px-3 py-3 text-left font-semibold text-gray-700">銘柄名</th>
                       <th className="px-3 py-3 text-right font-semibold text-gray-700">前日比</th>
                       <th className="px-3 py-3 text-right font-semibold text-gray-700">前月比</th>
@@ -470,14 +758,16 @@
                   <tbody className="divide-y">
                     {assets.length === 0 ? (
                       <tr>
-                        <td colSpan="10" className="px-3 py-8 text-center text-gray-500">
-                          銘柄が登録されていません。「銘柄追加」ボタンから追加してください。
+                        <td colSpan="9" className="px-3 py-8 text-center text-gray-500">
+                          銘柄が登録されていません
                         </td>
                       </tr>
                     ) : (
                       assets.map((asset) => {
                         const metrics = calculateMetrics(asset);
                         const isUs = isUsAsset(asset.type);
+                        const isCrypto = isCryptoAsset(asset.type);
+                        const isMetal = isPreciousMetal(asset.type);
                         
                         return (
                           <tr key={asset.id} className={`hover:bg-gray-50 ${!asset.isHolding ? 'bg-blue-50' : ''}`}>
@@ -489,7 +779,6 @@
                                 )}
                               </div>
                             </td>
-                            <td className="px-3 py-3 font-mono font-semibold">{asset.ticker}</td>
                             <td className="px-3 py-3">
                               {asset.kabutanUrl ? (
                                 <a href={asset.kabutanUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
@@ -512,21 +801,21 @@
                               </div>
                             </td>
                             <td className="px-3 py-3 text-right">
-                              {isUs ? (
+                              {(isUs || isCrypto) ? (
                                 <>
                                   <div className="font-semibold">{formatCurrency(metrics.marketValueUsd, 'USD')}</div>
                                   <div className="text-xs text-gray-500">{formatCurrency(metrics.marketValueJpy)}</div>
                                 </>
                               ) : (
-                                <div className="font-semibold">{formatCurrency(metrics.marketValueJpy)}</div>
+                                <div className="font-semibold">{formatCurrency(metrics.marketValueJpy, 'JPY', asset.type)}</div>
                               )}
                             </td>
                             <td className="px-3 py-3 text-right">
                               <div className={metrics.gainLossJpy >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                {isUs && (
+                                {(isUs || isCrypto) && (
                                   <div className="font-semibold">{metrics.gainLossUsd >= 0 ? '+' : ''}{formatCurrency(metrics.gainLossUsd, 'USD')}</div>
                                 )}
-                                <div className={isUs ? 'text-xs' : 'font-semibold'}>{metrics.gainLossJpy >= 0 ? '+' : ''}{formatCurrency(metrics.gainLossJpy)}</div>
+                                <div className={(isUs || isCrypto) ? 'text-xs' : 'font-semibold'}>{metrics.gainLossJpy >= 0 ? '+' : ''}{formatCurrency(metrics.gainLossJpy)}</div>
                                 <div className="text-xs">({metrics.gainLossRate >= 0 ? '+' : ''}{formatNumber(metrics.gainLossRate)}%)</div>
                               </div>
                             </td>
@@ -534,9 +823,7 @@
                               <button
                                 onClick={() => toggleGoldenCross(asset.id)}
                                 className={`px-2 py-1 rounded text-xs font-semibold ${
-                                  asset.goldenCross
-                                    ? 'bg-yellow-100 text-yellow-800'
-                                    : 'bg-gray-100 text-gray-400'
+                                  asset.goldenCross ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-400'
                                 }`}
                               >
                                 {asset.goldenCross ? 'GC' : '-'}
@@ -547,13 +834,28 @@
                                 <TrendIcon trend={metrics.trend} />
                               </div>
                             </td>
-                            <td className="px-3 py-3 text-center">
-                              <button
-                                onClick={() => deleteAsset(asset.id)}
-                                className="text-red-600 hover:text-red-800 p-1"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                            <td className="px-3 py-3">
+                              <div className="flex justify-center gap-1">
+                                <button
+                                  onClick={() => updatePrice(asset)}
+                                  disabled={updating[asset.id]}
+                                  className="text-blue-600 hover:text-blue-800 p-1 disabled:opacity-50"
+                                >
+                                  <RefreshCw className={`w-4 h-4 ${updating[asset.id] ? 'animate-spin' : ''}`} />
+                                </button>
+                                <button
+                                  onClick={() => startEdit(asset)}
+                                  className="text-green-600 hover:text-green-800 p-1"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => deleteAsset(asset.id)}
+                                  className="text-red-600 hover:text-red-800 p-1"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -570,12 +872,7 @@
                   <div className="text-sm text-gray-600">総資産（保有）</div>
                   <div className="text-2xl font-bold text-gray-900 mt-1">
                     {formatCurrency(
-                      assets
-                        .filter(a => a.isHolding)
-                        .reduce((sum, a) => {
-                          const m = calculateMetrics(a);
-                          return sum + m.marketValueJpy;
-                        }, 0)
+                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).marketValueJpy, 0)
                     )}
                   </div>
                 </div>
@@ -583,13 +880,10 @@
                   <div className="text-sm text-gray-600">総損益</div>
                   <div className={`text-2xl font-bold mt-1 ${
                     assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0) >= 0
-                      ? 'text-green-600'
-                      : 'text-red-600'
+                      ? 'text-green-600' : 'text-red-600'
                   }`}>
                     {formatCurrency(
-                      assets
-                        .filter(a => a.isHolding)
-                        .reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0)
+                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0)
                     )}
                   </div>
                 </div>
