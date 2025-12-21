@@ -73,6 +73,18 @@
       </svg>
     );
 
+    const ChevronUp = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+      </svg>
+    );
+
+    const ChevronDown = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    );
+
     const storage = window.storage || {
       get: async (key) => {
         const data = localStorage.getItem(key);
@@ -90,7 +102,8 @@
       const [showSettings, setShowSettings] = useState(false);
       const [editingId, setEditingId] = useState(null);
       const [loading, setLoading] = useState(true);
-      const [updating, setUpdating] = useState({});
+      const [updating, setUpdating] = useState(false);
+      const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0 });
       const [usdJpyRate, setUsdJpyRate] = useState(150);
       const [apiKey, setApiKey] = useState('');
       const [tempApiKey, setTempApiKey] = useState('');
@@ -185,7 +198,7 @@
         if (type === '日本株' || type === '日本ETF' || type === '日本投資信託') {
           return `https://kabutan.jp/stock/?code=${ticker}`;
         } else if (type === '米国株' || type === '米国ETF') {
-          return `https://kabutan.jp/stock/chart?code=${ticker}.us`;
+          return `https://us.kabutan.jp/stocks/${ticker}`;
         } else if (type === 'FX(ドル円)') {
           return 'https://kabutan.jp/stock/chart?code=998407';
         } else if (type === 'FX(ユーロ円)') {
@@ -238,7 +251,6 @@
           if (data.chart && data.chart.result && data.chart.result[0]) {
             const result = data.chart.result[0];
             const quotes = result.indicators.quote[0];
-            const timestamps = result.timestamp;
             
             if (quotes.close && quotes.close.length > 0) {
               const closes = quotes.close.filter(p => p !== null);
@@ -260,111 +272,121 @@
         }
       };
 
-      const updatePriceWithYahoo = async (asset) => {
-        setUpdating(prev => ({ ...prev, [asset.id]: true }));
+      const fetchAlphaVantage = async (ticker) => {
+        if (!apiKey) return null;
         
         try {
-          const symbol = getYahooSymbol(asset);
-          const priceData = await fetchYahooFinance(symbol);
-          
-          if (!priceData) {
-            alert('価格の取得に失敗しました');
-            return;
-          }
-
-          let currentPrice = priceData.currentPrice;
-          let currentPriceUsd = 0;
-
-          // 金銀プラチナはトロイオンスからグラムあたり円に変換
-          if (asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ') {
-            const troyOunceToGram = 31.1035;
-            currentPrice = (priceData.currentPrice * usdJpyRate) / troyOunceToGram;
-          }
-          // 暗号通貨は円換算
-          else if (asset.type === 'Bitcoin' || asset.type === 'Ethereum' || asset.type === 'XRP') {
-            currentPriceUsd = priceData.currentPrice;
-            currentPrice = priceData.currentPrice * usdJpyRate;
-          }
-
-          const updatedAsset = {
-            ...asset,
-            currentPrice: currentPrice,
-            currentPriceUsd: currentPriceUsd,
-            previousDayPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ' 
-              ? (priceData.previousDayPrice * usdJpyRate) / 31.1035
-              : priceData.previousDayPrice,
-            previousMonthPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ'
-              ? (priceData.previousMonthPrice * usdJpyRate) / 31.1035
-              : priceData.previousMonthPrice
-          };
-
-          const updatedAssets = assets.map(a => a.id === asset.id ? updatedAsset : a);
-          await saveAssets(updatedAssets);
-          
-          alert('価格を更新しました');
-        } catch (error) {
-          console.error('価格更新エラー:', error);
-          alert('価格の更新に失敗しました');
-        } finally {
-          setUpdating(prev => ({ ...prev, [asset.id]: false }));
-        }
-      };
-
-      const updatePriceWithAlphaVantage = async (asset) => {
-        if (!apiKey) {
-          alert('APIキーが設定されていません');
-          return;
-        }
-
-        setUpdating(prev => ({ ...prev, [asset.id]: true }));
-
-        try {
-          const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${asset.ticker}&apikey=${apiKey}`;
+          const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${apiKey}`;
           const response = await fetch(url);
           const data = await response.json();
           
           if (data['Global Quote'] && data['Global Quote']['05. price']) {
-            const currentPriceUsd = parseFloat(data['Global Quote']['05. price']);
-            const currentPrice = currentPriceUsd * usdJpyRate;
-
-            const updatedAsset = {
-              ...asset,
-              previousDayPrice: asset.currentPrice,
-              currentPrice: currentPrice,
-              currentPriceUsd: currentPriceUsd
+            return {
+              currentPrice: parseFloat(data['Global Quote']['05. price']),
+              previousDayPrice: parseFloat(data['Global Quote']['08. previous close'] || data['Global Quote']['05. price'])
             };
-
-            const updatedAssets = assets.map(a => a.id === asset.id ? updatedAsset : a);
-            await saveAssets(updatedAssets);
-            
-            alert('価格を更新しました');
-          } else if (data['Note']) {
-            alert('API制限に達しました。1分待ってから再試行してください。');
           }
+          return null;
         } catch (error) {
-          console.error('価格更新エラー:', error);
-          alert('価格の更新に失敗しました');
-        } finally {
-          setUpdating(prev => ({ ...prev, [asset.id]: false }));
+          console.error('Alpha Vantage取得エラー:', error);
+          return null;
         }
       };
 
-      const updatePrice = async (asset) => {
-        // 米国株・ETFはAlpha Vantage
-        if (asset.type === '米国株' || asset.type === '米国ETF') {
-          await updatePriceWithAlphaVantage(asset);
-        }
-        // その他はYahoo Finance
-        else {
-          await updatePriceWithYahoo(asset);
+      const updateSingleAsset = async (asset) => {
+        try {
+          let priceData = null;
+
+          // 米国株・ETFはAlpha Vantage
+          if (asset.type === '米国株' || asset.type === '米国ETF') {
+            priceData = await fetchAlphaVantage(asset.ticker);
+            if (priceData) {
+              return {
+                ...asset,
+                currentPriceUsd: priceData.currentPrice,
+                currentPrice: priceData.currentPrice * usdJpyRate,
+                previousDayPrice: priceData.previousDayPrice
+              };
+            }
+          }
+          // その他はYahoo Finance
+          else {
+            const symbol = getYahooSymbol(asset);
+            priceData = await fetchYahooFinance(symbol);
+            
+            if (priceData) {
+              let currentPrice = priceData.currentPrice;
+              let currentPriceUsd = 0;
+
+              // 金銀プラチナはトロイオンスからグラムあたり円に変換
+              if (asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ') {
+                const troyOunceToGram = 31.1035;
+                currentPrice = (priceData.currentPrice * usdJpyRate) / troyOunceToGram;
+              }
+              // 暗号通貨は円換算
+              else if (asset.type === 'Bitcoin' || asset.type === 'Ethereum' || asset.type === 'XRP') {
+                currentPriceUsd = priceData.currentPrice;
+                currentPrice = priceData.currentPrice * usdJpyRate;
+              }
+
+              return {
+                ...asset,
+                currentPrice: currentPrice,
+                currentPriceUsd: currentPriceUsd,
+                previousDayPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ' 
+                  ? (priceData.previousDayPrice * usdJpyRate) / 31.1035
+                  : priceData.previousDayPrice,
+                previousMonthPrice: asset.type === '金' || asset.type === '銀' || asset.type === 'プラチナ'
+                  ? (priceData.previousMonthPrice * usdJpyRate) / 31.1035
+                  : priceData.previousMonthPrice
+              };
+            }
+          }
+          
+          // エラーの場合は元のassetを返す
+          return asset;
+        } catch (error) {
+          console.error(`${asset.name}の更新エラー:`, error);
+          return asset;
         }
       };
 
       const updateAllPrices = async () => {
-        for (const asset of assets) {
-          await updatePrice(asset);
-          await new Promise(resolve => setTimeout(resolve, 3000));
+        if (updating) return;
+        
+        setUpdating(true);
+        setUpdateProgress({ current: 0, total: assets.length });
+
+        const updatedAssets = [];
+        
+        for (let i = 0; i < assets.length; i++) {
+          setUpdateProgress({ current: i + 1, total: assets.length });
+          
+          const updatedAsset = await updateSingleAsset(assets[i]);
+          updatedAssets.push(updatedAsset);
+          
+          // API制限対策（3秒待機）
+          if (i < assets.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
         }
+
+        await saveAssets(updatedAssets);
+        setUpdating(false);
+        setUpdateProgress({ current: 0, total: 0 });
+        alert('全ての銘柄の価格を更新しました');
+      };
+
+      const moveAsset = (index, direction) => {
+        if (direction === 'up' && index === 0) return;
+        if (direction === 'down' && index === assets.length - 1) return;
+
+        const newAssets = [...assets];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        
+        [newAssets[index], newAssets[targetIndex]] = [newAssets[targetIndex], newAssets[index]];
+        
+        saveAssets(newAssets);
       };
 
       const saveAssets = async (updatedAssets) => {
@@ -561,10 +583,11 @@
                   </button>
                   <button
                     onClick={updateAllPrices}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2"
+                    disabled={updating}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
                   >
-                    <RefreshCw className="w-4 h-4" />
-                    <span>全更新</span>
+                    <RefreshCw className={`w-4 h-4 ${updating ? 'animate-spin' : ''}`} />
+                    <span>{updating ? `更新中 ${updateProgress.current}/${updateProgress.total}` : '全更新'}</span>
                   </button>
                   <button
                     onClick={() => { resetForm(); setShowAddForm(!showAddForm); }}
@@ -744,6 +767,7 @@
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
+                      <th className="px-3 py-3 text-center font-semibold text-gray-700">順番</th>
                       <th className="px-3 py-3 text-left font-semibold text-gray-700">種類</th>
                       <th className="px-3 py-3 text-left font-semibold text-gray-700">銘柄名</th>
                       <th className="px-3 py-3 text-right font-semibold text-gray-700">前日比</th>
@@ -758,12 +782,12 @@
                   <tbody className="divide-y">
                     {assets.length === 0 ? (
                       <tr>
-                        <td colSpan="9" className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan="10" className="px-3 py-8 text-center text-gray-500">
                           銘柄が登録されていません
                         </td>
                       </tr>
                     ) : (
-                      assets.map((asset) => {
+                      assets.map((asset, index) => {
                         const metrics = calculateMetrics(asset);
                         const isUs = isUsAsset(asset.type);
                         const isCrypto = isCryptoAsset(asset.type);
@@ -771,6 +795,24 @@
                         
                         return (
                           <tr key={asset.id} className={`hover:bg-gray-50 ${!asset.isHolding ? 'bg-blue-50' : ''}`}>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-col items-center gap-1">
+                                <button
+                                  onClick={() => moveAsset(index, 'up')}
+                                  disabled={index === 0}
+                                  className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                                >
+                                  <ChevronUp className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => moveAsset(index, 'down')}
+                                  disabled={index === assets.length - 1}
+                                  className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                                >
+                                  <ChevronDown className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
                             <td className="px-3 py-3">
                               <div className="flex items-center gap-1">
                                 <span className="text-xs px-2 py-1 bg-gray-100 rounded">{asset.type}</span>
@@ -837,13 +879,6 @@
                             <td className="px-3 py-3">
                               <div className="flex justify-center gap-1">
                                 <button
-                                  onClick={() => updatePrice(asset)}
-                                  disabled={updating[asset.id]}
-                                  className="text-blue-600 hover:text-blue-800 p-1 disabled:opacity-50"
-                                >
-                                  <RefreshCw className={`w-4 h-4 ${updating[asset.id] ? 'animate-spin' : ''}`} />
-                                </button>
-                                <button
                                   onClick={() => startEdit(asset)}
                                   className="text-green-600 hover:text-green-800 p-1"
                                 >
@@ -899,9 +934,3 @@
           </div>
         </div>
       );
-    };
-
-    ReactDOM.render(<AssetPortfolioTracker />, document.getElementById('root'));
-  </script>
-</body>
-</html>
