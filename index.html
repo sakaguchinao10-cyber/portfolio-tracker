@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>資産ポートフォリオ管理</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Lucide Reactアイコンの代替（SVGで直接実装）
+    const Plus = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+      </svg>
+    );
+
+    const Trash2 = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      </svg>
+    );
+
+    const RefreshCw = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    );
+
+    const TrendingUp = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+      </svg>
+    );
+
+    const TrendingDown = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+      </svg>
+    );
+
+    const Minus = ({ className }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+      </svg>
+    );
+
+    // Storage APIのフォールバック（ローカル環境用）
+    const storage = window.storage || {
+      get: async (key) => {
+        const data = localStorage.getItem(key);
+        return data ? { key, value: data, shared: false } : null;
+      },
+      set: async (key, value, shared = false) => {
+        localStorage.setItem(key, value);
+        return { key, value, shared };
+      },
+      delete: async (key) => {
+        localStorage.removeItem(key);
+        return { key, deleted: true, shared: false };
+      },
+      list: async (prefix = '', shared = false) => {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key.startsWith(prefix)) {
+            keys.push(key);
+          }
+        }
+        return { keys, prefix, shared };
+      }
+    };
+
+    const AssetPortfolioTracker = () => {
+      const [assets, setAssets] = useState([]);
+      const [showAddForm, setShowAddForm] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [usdJpyRate, setUsdJpyRate] = useState(150);
+
+      const assetTypes = [
+        'FX(ドル円)',
+        'FX(ユーロ円)',
+        '米国株',
+        '米国ETF',
+        '日本株',
+        '日本投資信託',
+        '日本ETF',
+        '金',
+        '銀',
+        'プラチナ'
+      ];
+
+      const [newAsset, setNewAsset] = useState({
+        type: '日本株',
+        ticker: '',
+        name: '',
+        acquisitionPrice: '',
+        acquisitionPriceUsd: '',
+        quantity: '',
+        currentPrice: '',
+        currentPriceUsd: '',
+        previousDayPrice: '',
+        previousMonthPrice: '',
+        goldenCross: false,
+        kabutanUrl: '',
+        isHolding: true
+      });
+
+      useEffect(() => {
+        loadAssets();
+      }, []);
+
+      const loadAssets = async () => {
+        try {
+          const result = await storage.get('portfolio-assets');
+          if (result && result.value) {
+            setAssets(JSON.parse(result.value));
+          }
+        } catch (error) {
+          console.log('初回起動またはデータなし');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const saveAssets = async (updatedAssets) => {
+        try {
+          await storage.set('portfolio-assets', JSON.stringify(updatedAssets));
+          setAssets(updatedAssets);
+        } catch (error) {
+          console.error('保存エラー:', error);
+          alert('データの保存に失敗しました');
+        }
+      };
+
+      const addAsset = () => {
+        if (!newAsset.ticker || !newAsset.name) {
+          alert('ティッカー/コードと銘柄名は必須です');
+          return;
+        }
+
+        const asset = {
+          ...newAsset,
+          id: Date.now(),
+          acquisitionPrice: parseFloat(newAsset.acquisitionPrice) || 0,
+          acquisitionPriceUsd: parseFloat(newAsset.acquisitionPriceUsd) || 0,
+          quantity: parseFloat(newAsset.quantity) || 0,
+          currentPrice: parseFloat(newAsset.currentPrice) || 0,
+          currentPriceUsd: parseFloat(newAsset.currentPriceUsd) || 0,
+          previousDayPrice: parseFloat(newAsset.previousDayPrice) || 0,
+          previousMonthPrice: parseFloat(newAsset.previousMonthPrice) || 0
+        };
+
+        const updatedAssets = [...assets, asset];
+        saveAssets(updatedAssets);
+
+        setNewAsset({
+          type: '日本株',
+          ticker: '',
+          name: '',
+          acquisitionPrice: '',
+          acquisitionPriceUsd: '',
+          quantity: '',
+          currentPrice: '',
+          currentPriceUsd: '',
+          previousDayPrice: '',
+          previousMonthPrice: '',
+          goldenCross: false,
+          kabutanUrl: '',
+          isHolding: true
+        });
+        setShowAddForm(false);
+      };
+
+      const deleteAsset = (id) => {
+        if (confirm('この銘柄を削除しますか?')) {
+          const updatedAssets = assets.filter(a => a.id !== id);
+          saveAssets(updatedAssets);
+        }
+      };
+
+      const toggleGoldenCross = (id) => {
+        const updatedAssets = assets.map(a =>
+          a.id === id ? { ...a, goldenCross: !a.goldenCross } : a
+        );
+        saveAssets(updatedAssets);
+      };
+
+      const isUsAsset = (type) => {
+        return type === '米国株' || type === '米国ETF';
+      };
+
+      const calculateMetrics = (asset) => {
+        const isUs = isUsAsset(asset.type);
+        
+        const dayDiff = asset.currentPrice - asset.previousDayPrice;
+        const dayDiffRate = asset.previousDayPrice ? (dayDiff / asset.previousDayPrice * 100) : 0;
+        
+        const monthDiff = asset.currentPrice - asset.previousMonthPrice;
+        const monthDiffRate = asset.previousMonthPrice ? (monthDiff / asset.previousMonthPrice * 100) : 0;
+        
+        const marketValueUsd = isUs ? asset.currentPriceUsd * asset.quantity : 0;
+        const marketValueJpy = isUs ? marketValueUsd * usdJpyRate : asset.currentPrice * asset.quantity;
+        
+        const acquisitionValueUsd = isUs ? asset.acquisitionPriceUsd * asset.quantity : 0;
+        const acquisitionValueJpy = isUs ? acquisitionValueUsd * usdJpyRate : asset.acquisitionPrice * asset.quantity;
+        
+        const gainLossUsd = marketValueUsd - acquisitionValueUsd;
+        const gainLossJpy = marketValueJpy - acquisitionValueJpy;
+        const gainLossRate = acquisitionValueJpy ? (gainLossJpy / acquisitionValueJpy * 100) : 0;
+        
+        let trend = null;
+        if (dayDiff > 0) trend = 'up';
+        else if (dayDiff < 0) trend = 'down';
+        else trend = 'neutral';
+        
+        return {
+          dayDiff,
+          dayDiffRate,
+          monthDiff,
+          monthDiffRate,
+          marketValueUsd,
+          marketValueJpy,
+          acquisitionValueUsd,
+          acquisitionValueJpy,
+          gainLossUsd,
+          gainLossJpy,
+          gainLossRate,
+          trend
+        };
+      };
+
+      const formatNumber = (num, decimals = 2) => {
+        return num.toLocaleString('ja-JP', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+      };
+
+      const formatCurrency = (num, currency = 'JPY') => {
+        if (currency === 'USD') {
+          return `$${formatNumber(num)}`;
+        }
+        return `¥${formatNumber(num, 0)}`;
+      };
+
+      const TrendIcon = ({ trend }) => {
+        if (trend === 'up') return <TrendingUp className="w-4 h-4 text-green-600" />;
+        if (trend === 'down') return <TrendingDown className="w-4 h-4 text-red-600" />;
+        return <Minus className="w-4 h-4 text-gray-400" />;
+      };
+
+      if (loading) {
+        return (
+          <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+            <div className="text-center">
+              <RefreshCw className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-2" />
+              <p className="text-gray-600">読み込み中...</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gray-50 p-2 sm:p-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">資産ポートフォリオ</h1>
+                  <p className="text-sm text-gray-500 mt-1">保有資産と監視銘柄の管理</p>
+                </div>
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <input
+                    type="number"
+                    value={usdJpyRate}
+                    onChange={(e) => setUsdJpyRate(parseFloat(e.target.value) || 150)}
+                    className="px-3 py-2 border rounded-lg text-sm w-24"
+                    placeholder="USD/JPY"
+                  />
+                  <button
+                    onClick={() => setShowAddForm(!showAddForm)}
+                    className="flex-1 sm:flex-none bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>銘柄追加</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {showAddForm && (
+              <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
+                <h2 className="text-lg font-semibold mb-4">新規銘柄追加</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">資産種類</label>
+                    <select
+                      value={newAsset.type}
+                      onChange={(e) => setNewAsset({ ...newAsset, type: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      {assetTypes.map(type => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">ティッカー/コード</label>
+                    <input
+                      type="text"
+                      value={newAsset.ticker}
+                      onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="AAPL, 7203など"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">銘柄名</label>
+                    <input
+                      type="text"
+                      value={newAsset.name}
+                      onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="Apple Inc.など"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      取得単価{isUsAsset(newAsset.type) ? ' (USD)' : ' (円)'}
+                    </label>
+                    <input
+                      type="number"
+                      value={isUsAsset(newAsset.type) ? newAsset.acquisitionPriceUsd : newAsset.acquisitionPrice}
+                      onChange={(e) => setNewAsset({
+                        ...newAsset,
+                        ...(isUsAsset(newAsset.type)
+                          ? { acquisitionPriceUsd: e.target.value }
+                          : { acquisitionPrice: e.target.value })
+                      })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      step="0.01"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">保有数量</label>
+                    <input
+                      type="number"
+                      value={newAsset.quantity}
+                      onChange={(e) => setNewAsset({ ...newAsset, quantity: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      step="0.01"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      現在価格{isUsAsset(newAsset.type) ? ' (USD)' : ' (円)'}
+                    </label>
+                    <input
+                      type="number"
+                      value={isUsAsset(newAsset.type) ? newAsset.currentPriceUsd : newAsset.currentPrice}
+                      onChange={(e) => setNewAsset({
+                        ...newAsset,
+                        ...(isUsAsset(newAsset.type)
+                          ? { currentPriceUsd: e.target.value, currentPrice: parseFloat(e.target.value) * usdJpyRate }
+                          : { currentPrice: e.target.value })
+                      })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      step="0.01"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">前日価格</label>
+                    <input
+                      type="number"
+                      value={newAsset.previousDayPrice}
+                      onChange={(e) => setNewAsset({ ...newAsset, previousDayPrice: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      step="0.01"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">前月価格</label>
+                    <input
+                      type="number"
+                      value={newAsset.previousMonthPrice}
+                      onChange={(e) => setNewAsset({ ...newAsset, previousMonthPrice: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      step="0.01"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">株探URL</label>
+                    <input
+                      type="text"
+                      value={newAsset.kabutanUrl}
+                      onChange={(e) => setNewAsset({ ...newAsset, kabutanUrl: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="https://..."
+                    />
+                  </div>
+
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newAsset.isHolding}
+                        onChange={(e) => setNewAsset({ ...newAsset, isHolding: e.target.checked })}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm font-medium text-gray-700">保有中</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={addAsset}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                  >
+                    追加
+                  </button>
+                  <button
+                    onClick={() => setShowAddForm(false)}
+                    className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="px-3 py-3 text-left font-semibold text-gray-700">種類</th>
+                      <th className="px-3 py-3 text-left font-semibold text-gray-700">ティッカー</th>
+                      <th className="px-3 py-3 text-left font-semibold text-gray-700">銘柄名</th>
+                      <th className="px-3 py-3 text-right font-semibold text-gray-700">前日比</th>
+                      <th className="px-3 py-3 text-right font-semibold text-gray-700">前月比</th>
+                      <th className="px-3 py-3 text-right font-semibold text-gray-700">時価</th>
+                      <th className="px-3 py-3 text-right font-semibold text-gray-700">損益</th>
+                      <th className="px-3 py-3 text-center font-semibold text-gray-700">GC</th>
+                      <th className="px-3 py-3 text-center font-semibold text-gray-700">傾向</th>
+                      <th className="px-3 py-3 text-center font-semibold text-gray-700">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {assets.length === 0 ? (
+                      <tr>
+                        <td colSpan="10" className="px-3 py-8 text-center text-gray-500">
+                          銘柄が登録されていません。「銘柄追加」ボタンから追加してください。
+                        </td>
+                      </tr>
+                    ) : (
+                      assets.map((asset) => {
+                        const metrics = calculateMetrics(asset);
+                        const isUs = isUsAsset(asset.type);
+                        
+                        return (
+                          <tr key={asset.id} className={`hover:bg-gray-50 ${!asset.isHolding ? 'bg-blue-50' : ''}`}>
+                            <td className="px-3 py-3">
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs px-2 py-1 bg-gray-100 rounded">{asset.type}</span>
+                                {!asset.isHolding && (
+                                  <span className="text-xs px-1 py-1 bg-blue-100 text-blue-700 rounded">監視</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 font-mono font-semibold">{asset.ticker}</td>
+                            <td className="px-3 py-3">
+                              {asset.kabutanUrl ? (
+                                <a href={asset.kabutanUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                                  {asset.name}
+                                </a>
+                              ) : (
+                                asset.name
+                              )}
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                              <div className={metrics.dayDiff >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                <div className="font-semibold">{metrics.dayDiff >= 0 ? '+' : ''}{formatNumber(metrics.dayDiff)}</div>
+                                <div className="text-xs">({metrics.dayDiffRate >= 0 ? '+' : ''}{formatNumber(metrics.dayDiffRate)}%)</div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                              <div className={metrics.monthDiff >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                <div className="font-semibold">{metrics.monthDiff >= 0 ? '+' : ''}{formatNumber(metrics.monthDiff)}</div>
+                                <div className="text-xs">({metrics.monthDiffRate >= 0 ? '+' : ''}{formatNumber(metrics.monthDiffRate)}%)</div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                              {isUs ? (
+                                <>
+                                  <div className="font-semibold">{formatCurrency(metrics.marketValueUsd, 'USD')}</div>
+                                  <div className="text-xs text-gray-500">{formatCurrency(metrics.marketValueJpy)}</div>
+                                </>
+                              ) : (
+                                <div className="font-semibold">{formatCurrency(metrics.marketValueJpy)}</div>
+                              )}
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                              <div className={metrics.gainLossJpy >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                {isUs && (
+                                  <div className="font-semibold">{metrics.gainLossUsd >= 0 ? '+' : ''}{formatCurrency(metrics.gainLossUsd, 'USD')}</div>
+                                )}
+                                <div className={isUs ? 'text-xs' : 'font-semibold'}>{metrics.gainLossJpy >= 0 ? '+' : ''}{formatCurrency(metrics.gainLossJpy)}</div>
+                                <div className="text-xs">({metrics.gainLossRate >= 0 ? '+' : ''}{formatNumber(metrics.gainLossRate)}%)</div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <button
+                                onClick={() => toggleGoldenCross(asset.id)}
+                                className={`px-2 py-1 rounded text-xs font-semibold ${
+                                  asset.goldenCross
+                                    ? 'bg-yellow-100 text-yellow-800'
+                                    : 'bg-gray-100 text-gray-400'
+                                }`}
+                              >
+                                {asset.goldenCross ? 'GC' : '-'}
+                              </button>
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <div className="flex justify-center">
+                                <TrendIcon trend={metrics.trend} />
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <button
+                                onClick={() => deleteAsset(asset.id)}
+                                className="text-red-600 hover:text-red-800 p-1"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {assets.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white rounded-lg shadow-sm p-4">
+                  <div className="text-sm text-gray-600">総資産（保有）</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">
+                    {formatCurrency(
+                      assets
+                        .filter(a => a.isHolding)
+                        .reduce((sum, a) => {
+                          const m = calculateMetrics(a);
+                          return sum + m.marketValueJpy;
+                        }, 0)
+                    )}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow-sm p-4">
+                  <div className="text-sm text-gray-600">総損益</div>
+                  <div className={`text-2xl font-bold mt-1 ${
+                    assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0) >= 0
+                      ? 'text-green-600'
+                      : 'text-red-600'
+                  }`}>
+                    {formatCurrency(
+                      assets
+                        .filter(a => a.isHolding)
+                        .reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0)
+                    )}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow-sm p-4">
+                  <div className="text-sm text-gray-600">登録銘柄数</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">
+                    {assets.filter(a => a.isHolding).length} / {assets.length}
+                    <span className="text-sm text-gray-500 ml-1">件</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<AssetPortfolioTracker />, document.getElementById('root'));
+  </script>
+</body>
+</html>
