@@ -198,7 +198,7 @@
         if (type === '日本株' || type === '日本ETF' || type === '日本投資信託') {
           return `https://kabutan.jp/stock/?code=${ticker}`;
         } else if (type === '米国株' || type === '米国ETF') {
-          return `https://us.kabutan.jp/stocks/${ticker}`;
+          return `https://kabutan.jp/us/stock/?code=${ticker}`;
         } else if (type === 'FX(ドル円)') {
           return 'https://kabutan.jp/stock/chart?code=998407';
         } else if (type === 'FX(ユーロ円)') {
@@ -902,35 +902,69 @@
             </div>
 
             {assets.length > 0 && (
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-white rounded-lg shadow-sm p-4">
-                  <div className="text-sm text-gray-600">総資産（保有）</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">
-                    {formatCurrency(
-                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).marketValueJpy, 0)
-                    )}
+              <>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <div className="text-sm text-gray-600">取得総額（保有）</div>
+                    <div className="text-2xl font-bold text-gray-900 mt-1">
+                      {formatCurrency(
+                        assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).acquisitionValueJpy, 0)
+                      )}
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <div className="text-sm text-gray-600">評価額（保有）</div>
+                    <div className="text-2xl font-bold text-blue-600 mt-1">
+                      {formatCurrency(
+                        assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).marketValueJpy, 0)
+                      )}
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <div className="text-sm text-gray-600">評価損益</div>
+                    <div className={`text-2xl font-bold mt-1 ${
+                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0) >= 0
+                        ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {(() => {
+                        const totalGainLoss = assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0);
+                        return (totalGainLoss >= 0 ? '+' : '') + formatCurrency(totalGainLoss);
+                      })()}
+                    </div>
+                    <div className={`text-xs mt-1 ${
+                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0) >= 0
+                        ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {(() => {
+                        const totalAcquisition = assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).acquisitionValueJpy, 0);
+                        const totalGainLoss = assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0);
+                        const gainLossRate = totalAcquisition ? (totalGainLoss / totalAcquisition * 100) : 0;
+                        return (gainLossRate >= 0 ? '+' : '') + formatNumber(gainLossRate) + '%';
+                      })()}
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <div className="text-sm text-gray-600">登録銘柄数</div>
+                    <div className="text-2xl font-bold text-gray-900 mt-1">
+                      {assets.filter(a => a.isHolding).length} / {assets.length}
+                      <span className="text-sm text-gray-500 ml-1">件</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      保有 {assets.filter(a => a.isHolding).length} / 監視 {assets.filter(a => !a.isHolding).length}
+                    </div>
                   </div>
                 </div>
-                <div className="bg-white rounded-lg shadow-sm p-4">
-                  <div className="text-sm text-gray-600">総損益</div>
-                  <div className={`text-2xl font-bold mt-1 ${
-                    assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0) >= 0
-                      ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {formatCurrency(
-                      assets.filter(a => a.isHolding).reduce((sum, a) => sum + calculateMetrics(a).gainLossJpy, 0)
-                    )}
-                  </div>
-                </div>
-                <div className="bg-white rounded-lg shadow-sm p-4">
-                  <div className="text-sm text-gray-600">登録銘柄数</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">
-                    {assets.filter(a => a.isHolding).length} / {assets.length}
-                    <span className="text-sm text-gray-500 ml-1">件</span>
-                  </div>
-                </div>
-              </div>
+              </>
             )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<AssetPortfolioTracker />, document.getElementById('root'));
+  </script>
+</body>
+</html>
           </div>
         </div>
       );
