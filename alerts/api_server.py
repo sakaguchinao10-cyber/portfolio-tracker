@@ -22,15 +22,29 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 
+import socket
 import uvicorn
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from stock_morning_alert import StockMorningAlert, SECTOR_JP, OUTPUT_JSON
+
+# index.html のパス (alerts/ の一つ上のディレクトリ)
+INDEX_HTML = Path(__file__).parent.parent / "index.html"
+
+
+def get_local_ip() -> str:
+    """LAN上のIPアドレスを取得"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -152,9 +166,22 @@ async def run_analysis(background_tasks: BackgroundTasks):
     return {"message": "分析を開始しました。/api/morning-alert で結果を確認できます。"}
 
 
+@app.get("/")
+async def serve_index():
+    """index.html を配信 (スマホ含む全デバイス対応)"""
+    if not INDEX_HTML.exists():
+        raise HTTPException(status_code=404, detail="index.html が見つかりません")
+    return FileResponse(INDEX_HTML, media_type="text/html")
+
+
 # ─── 起動 ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8000"))
-    logger.info(f"APIサーバー起動 → http://localhost:{port}")
+    local_ip = get_local_ip()
+    logger.info("=" * 56)
+    logger.info(f"  APIサーバー起動")
+    logger.info(f"  PC:     http://localhost:{port}")
+    logger.info(f"  スマホ: http://{local_ip}:{port}  ← 同じWi-Fiで接続")
+    logger.info("=" * 56)
     uvicorn.run("api_server:app", host="0.0.0.0", port=port, reload=False)

@@ -30,7 +30,11 @@
     // ─── 朝のアラート コンポーネント ──────────────────────────────────
 
     const MEDALS = ['🥇', '🥈', '🥉'];
-    const API_BASE = 'http://localhost:8000';
+    // APIサーバーのベースURL: サーバー経由で開いた場合は同じオリジン、
+    // ファイル直接起動 (file://) の場合は localhost:8000 にフォールバック
+    const API_BASE = window.location.protocol === 'file:'
+      ? 'http://localhost:8000'
+      : window.location.origin;
 
     const ProbBar = ({ prob }) => {
       const pct = Math.round(prob * 100);
