@@ -6,3 +6,7 @@ python-dotenv>=1.0.0
 fastapi>=0.111.0
 uvicorn>=0.29.0
 requests>=2.31.0
+
+# リモートアクセス用 (任意)
+# pip install pyngrok
+pyngrok>=7.0.0
