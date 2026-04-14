@@ -18,7 +18,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useCallback } = React;
 
     // アイコンコンポーネント
     const Plus = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
@@ -26,6 +26,235 @@
     const RefreshCw = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>;
     const Settings = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
     const Download = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>;
+
+    // ─── 朝のアラート コンポーネント ──────────────────────────────────
+
+    const MEDALS = ['🥇', '🥈', '🥉'];
+    const API_BASE = 'http://localhost:8000';
+
+    const ProbBar = ({ prob }) => {
+      const pct = Math.round(prob * 100);
+      const color = pct >= 65 ? 'bg-emerald-500' : pct >= 55 ? 'bg-amber-400' : 'bg-slate-400';
+      return (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 bg-slate-100 rounded-full h-2">
+            <div className={`${color} h-2 rounded-full transition-all`} style={{ width: `${pct}%` }} />
+          </div>
+          <span className={`text-sm font-bold ${pct >= 65 ? 'text-emerald-600' : pct >= 55 ? 'text-amber-600' : 'text-slate-500'}`}>{pct}%</span>
+        </div>
+      );
+    };
+
+    const MoveChips = ({ moves }) => (
+      <div className="flex flex-wrap gap-1 mt-1">
+        {moves.map((m, i) => {
+          const color = m >= 1.5 ? 'bg-emerald-100 text-emerald-700' : m >= 0.3 ? 'bg-emerald-50 text-emerald-600' : m <= -1.5 ? 'bg-rose-100 text-rose-700' : m <= -0.3 ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500';
+          const arrow = m >= 0.3 ? '↑' : m <= -0.3 ? '↓' : '→';
+          return (
+            <span key={i} className={`text-xs px-2 py-0.5 rounded-full font-mono ${color}`}>
+              {arrow}{m > 0 ? '+' : ''}{m.toFixed(1)}%
+            </span>
+          );
+        })}
+      </div>
+    );
+
+    const CorrRow = ({ name, value }) => {
+      const abs = Math.abs(value);
+      const stars = abs >= 0.7 ? '★★★' : abs >= 0.4 ? '★★☆' : '★☆☆';
+      const label = value >= 0.7 ? '強い正相関' : value >= 0.4 ? '中程度の正相関' : value >= 0.1 ? '弱い正相関' : value >= -0.1 ? 'ほぼ無相関' : value >= -0.4 ? '弱い逆相関' : '強い逆相関';
+      const color = value >= 0.4 ? 'text-emerald-600' : value <= -0.4 ? 'text-rose-600' : 'text-slate-500';
+      return (
+        <div className="flex items-center justify-between text-xs text-slate-600 py-0.5">
+          <span className="truncate mr-2">{name}</span>
+          <span className={`font-mono font-bold ${color}`}>{value > 0 ? '+' : ''}{value.toFixed(3)}</span>
+          <span className="ml-2 text-slate-400">{stars} {label}</span>
+        </div>
+      );
+    };
+
+    const MorningAlert = () => {
+      const [data, setData]       = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [analyzing, setAnalyzing] = useState(false);
+      const [error, setError]     = useState('');
+      const [open, setOpen]       = useState(true);
+
+      const fetchAlert = useCallback(async () => {
+        setLoading(true);
+        setError('');
+        try {
+          const res = await fetch(`${API_BASE}/api/morning-alert`, { signal: AbortSignal.timeout(120000) });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${res.status}`);
+          }
+          setData(await res.json());
+        } catch (e) {
+          if (e.name !== 'AbortError') setError(e.message || '取得に失敗しました');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      const runAnalysis = useCallback(async () => {
+        setAnalyzing(true);
+        setError('');
+        try {
+          await fetch(`${API_BASE}/api/run-analysis`, { method: 'POST' });
+          // バックグラウンド実行なので少し待ってから結果を取得
+          await new Promise(r => setTimeout(r, 3000));
+          await fetchAlert();
+        } catch (e) {
+          setError('分析の開始に失敗しました。APIサーバーが起動しているか確認してください。');
+        } finally {
+          setAnalyzing(false);
+        }
+      }, [fetchAlert]);
+
+      useEffect(() => { fetchAlert(); }, [fetchAlert]);
+
+      const top3 = data?.top_picks || [];
+      const usMarket = data?.us_market || {};
+      const generatedAt = data?.generated_at ? new Date(data.generated_at) : null;
+
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 mb-6 overflow-hidden">
+          {/* ヘッダー */}
+          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 text-white cursor-pointer" onClick={() => setOpen(o => !o)}>
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🌅</span>
+              <span className="font-bold">朝のアラート — 寄り付き上昇期待 TOP3</span>
+              {generatedAt && <span className="text-xs opacity-75 ml-2">{generatedAt.toLocaleString('ja-JP')}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={e => { e.stopPropagation(); runAnalysis(); }} disabled={analyzing || loading}
+                className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg disabled:opacity-50 transition-colors">
+                {analyzing ? '分析中...' : '今すぐ分析'}
+              </button>
+              <button onClick={e => { e.stopPropagation(); fetchAlert(); }} disabled={loading}
+                className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg disabled:opacity-50 transition-colors">
+                {loading ? '読込中...' : '更新'}
+              </button>
+              <span className="text-sm">{open ? '▲' : '▼'}</span>
+            </div>
+          </div>
+
+          {open && (
+            <div className="p-4">
+              {error && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                  <span className="font-bold">⚠ </span>{error}
+                  <div className="mt-1 text-xs text-amber-600">
+                    APIサーバーを起動してください: <code className="bg-amber-100 px-1 rounded">cd alerts && python api_server.py</code>
+                  </div>
+                </div>
+              )}
+
+              {loading && !data && (
+                <div className="flex items-center justify-center py-8 text-slate-400">
+                  <svg className="animate-spin w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  分析データを取得中...
+                </div>
+              )}
+
+              {data && (
+                <>
+                  {/* 米国市場サマリー */}
+                  <div className="mb-4">
+                    <p className="text-xs font-bold text-slate-500 uppercase mb-2">前日の米国市場</p>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                      {Object.entries(usMarket).map(([ticker, d]) => {
+                        const chg = d.change_pct;
+                        const pos = chg >= 0;
+                        const isVix = ticker === '^VIX';
+                        const good = isVix ? !pos : pos;
+                        return (
+                          <div key={ticker} className={`p-2 rounded-lg text-center border ${good ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                            <div className="text-xs text-slate-500 truncate">{d.name}</div>
+                            <div className={`text-sm font-bold ${good ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {chg >= 0 ? '+' : ''}{chg.toFixed(2)}%
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* TOP3 */}
+                  {top3.length === 0 ? (
+                    <div className="py-6 text-center text-slate-500 bg-slate-50 rounded-xl">
+                      <div className="text-2xl mb-2">⚠</div>
+                      <div className="font-bold">本日は上昇確率が高い銘柄がありません</div>
+                      <div className="text-sm mt-1">米国市場の動向を確認し、慎重に判断してください。</div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {top3.map((stock, i) => (
+                        <div key={stock.ticker} className="border border-slate-100 rounded-xl p-4 hover:shadow-md transition-shadow">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <div className="text-lg">{MEDALS[i]}</div>
+                              <div className="font-bold text-slate-800 mt-0.5">{stock.name}</div>
+                              <div className="text-xs text-slate-400 font-mono">{stock.ticker}</div>
+                            </div>
+                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full">{stock.sector_jp}</span>
+                          </div>
+
+                          <div className="mb-3">
+                            <div className="text-xs text-slate-500 mb-1">上昇確率</div>
+                            <ProbBar prob={stock.probability} />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+                            <div className="bg-slate-50 rounded-lg p-2">
+                              <div className="text-slate-500">現在株価</div>
+                              <div className="font-bold text-slate-800">¥{stock.current_price.toLocaleString()}</div>
+                            </div>
+                            <div className={`rounded-lg p-2 ${stock.prev_day_change >= 0 ? 'bg-emerald-50' : 'bg-rose-50'}`}>
+                              <div className="text-slate-500">前日比</div>
+                              <div className={`font-bold ${stock.prev_day_change >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {stock.prev_day_change >= 0 ? '+' : ''}{stock.prev_day_change.toFixed(2)}%
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mb-3">
+                            <div className="text-xs text-slate-500 mb-1">直近5日間の動き</div>
+                            <MoveChips moves={stock.recent_moves} />
+                          </div>
+
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-slate-500 hover:text-slate-700 select-none">
+                              米国市場との相関 ▶
+                            </summary>
+                            <div className="mt-2 space-y-0.5 bg-slate-50 rounded-lg p-2">
+                              {Object.entries(stock.correlation_with_us).map(([name, val]) => (
+                                <CorrRow key={name} name={name} value={val} />
+                              ))}
+                            </div>
+                          </details>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-slate-400 mt-3 text-center">
+                    ※ この情報は投資の参考情報です。投資判断はご自身でお願いします。
+                    {data.all_results_count && <span> ({data.all_results_count}銘柄を分析)</span>}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // ─── メインアプリ ──────────────────────────────────────────────
 
     const AssetPortfolioTracker = () => {
       const [assets, setAssets] = useState([]);
@@ -162,6 +391,9 @@
               </button>
             </div>
           </header>
+
+          {/* 朝のアラート */}
+          <MorningAlert />
 
           {/* サマリーカード */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
